@@ -1,0 +1,133 @@
+trigger: 
+- main
+- feature/*
+#Default agent 
+pool: ToDoApp-Proj-Agents-Pool
+
+variables:
+  workdir: '$(System.DefaultWorkingDirectory)/environment/prod'
+  serviceConn: 'TodoAppProj01-Service_Conn'
+stages:
+  - stage: Build
+    displayName: Build
+    jobs:
+      - job: TerraformInitFmtValidate
+        displayName: Terraform Init, Fmt, Validate Job
+        pool: ToDoApp-Proj-Agents-Pool
+        steps:
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: $(workdir)
+            backendServiceArm: $(serviceConn)
+            backendAzureRmStorageAccountName: 'tfstatestorage00011'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'prod.terraform.tfstate'
+        
+        - task: TerraformTask@5
+          displayName: Terraform fmt
+          inputs:
+            provider: 'azurerm'
+            command: 'custom'
+            workingDirectory: $(workdir)
+            outputTo: 'console'
+            customCommand: 'fmt'
+            environmentServiceNameAzureRM: $(serviceConn)
+            
+        - task: TerraformTask@5
+          displayName: Terraform validate
+          inputs:
+            provider: 'azurerm'
+            command: 'validate'
+            workingDirectory: $(workdir)
+      - job: TerraformInitPlan
+        displayName: Terraform Init and Plan Job
+        pool: ToDoApp-Proj-Agents-Pool
+        dependsOn: TerraformInitFmtValidate
+        steps:
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: $(workdir)
+            backendServiceArm: $(serviceConn)
+            backendAzureRmStorageAccountName: 'tfstatestorage00011'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'prod.terraform.tfstate'
+
+        - task: TerraformTask@5
+          displayName: Terraform Plan
+          inputs:
+            provider: 'azurerm'
+            command: 'plan'
+            workingDirectory: $(workdir)
+            environmentServiceNameAzureRM: $(serviceConn)
+
+      
+
+
+  - stage: SecurityScanning
+    displayName: SecurityScanning
+    jobs:
+      - job: TFSecScanningJob
+        displayName: TFSEC Scanning job
+        pool: ToDoApp-Proj-Agents-Pool
+        steps:
+        - task: tfsec@1
+          displayName: tfSec Scanning
+          inputs:
+            version: 'v1.26.0'
+            dir: $(workdir)
+      - job: TfLintScanningJob
+        displayName: TFLINT Scanning  Job
+        pool: ToDoApp-Proj-Agents-Pool
+        steps:
+        - task: CmdLine@2
+          displayName: tflint scanning
+          inputs:
+            script: 'echo Hello world'
+  - stage: Deploy
+    displayName: Deploy
+    jobs:
+      - job: ManualValidation
+        displayName: ManualValidation
+        condition: succeeded('TerraformInitPlan')
+        pool: server
+        steps:
+        - task: ManualValidation@1
+          displayName: Manual Validation
+          inputs:
+            notifyUsers: |
+              Jay@cloudlearningcom.onmicrosoft.com
+            approvers: |
+              Jay@cloudlearningcom.onmicrosoft.com
+      - job: TerraformApply
+        displayName: Terraform Apply Job
+        condition: |
+                    and(
+                      succeeded(),
+                      eq(variables['Build.SourceBranch'], 'refs/heads/main')
+                    )
+        steps:
+        - task: TerraformTask@5
+          displayName: Terraform Init
+          inputs:
+            provider: 'azurerm'
+            command: 'init'
+            workingDirectory: $(workdir)
+            backendServiceArm: $(serviceConn)
+            backendAzureRmStorageAccountName: 'tfstatestorage00011'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'prod.terraform.tfstate'
+        
+        - task: TerraformTask@5
+          displayName: Terraform Apply
+          inputs:
+            provider: 'azurerm'
+            command: 'apply'
+            workingDirectory: $(workdir)
+            environmentServiceNameAzureRM: $(serviceConn)
+        
